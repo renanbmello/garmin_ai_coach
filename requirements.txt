@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+garminconnect
+pandas
+scikit-learn
+python-dotenv
+sqlalchemy
+pydantic
+
