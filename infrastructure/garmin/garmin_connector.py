@@ -14,13 +14,14 @@ class GarminConnector:
     async def connect(self):
         if not self.client:
             self.client = Garmin(self.email, self.password)
-            await self.client.login()
+            self.client.login()
+            print("Connected to Garmin")
 
     async def get_latest_activity(self):
         await self.connect()
-        activities = await self.client.get_activity(0, 1)
+        activities = self.client.get_activities(0, 1)
         return activities[0] if activities else None 
 
     async def get_activity_details(self, activity_id: str):
         await self.connect()
-        return await self.client.get_activity_details(activity_id)
+        return  self.client.get_activity_details(activity_id)
