@@ -12,5 +12,5 @@ class GarminSessionMiddleware(BaseHTTPMiddleware):
         if request.url.path in ["/", "/docs", "/openapi.json"]:
             return await call_next(request)
 
-        await self.auth_service.ensure_authenticated()
+        await self.auth_service.ensure_authentication()
         return await call_next(request)

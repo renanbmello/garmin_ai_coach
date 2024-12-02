@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 import logging
 from garminconnect import (
@@ -9,13 +9,14 @@ from garminconnect import (
     GarminConnectConnectionError,
     GarminConnectTooManyRequestsError
 )
+from domain.entities.activity import Activity
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 class GarminConnector:
-    MAX_RETRIES = 3
-    RETRY_DELAY = 1
+    MAX_RETRIES = 5
+    INITIAL_RETRY_DELAY = 5  
 
     def __init__(self):
         self.email = os.getenv("GARMIN_EMAIL")
@@ -27,29 +28,39 @@ class GarminConnector:
 
     async def connect(self) -> None:
         """Connect to Garmin and login"""
-        try:
-            self.client = Garmin(self.email, self.password)
-            self.client.login()
-            logger.info("Connected to Garmin")
-        except GarminConnectAuthenticationError:
-            logger.error(f"Error connecting to Garmin: {str(e)}")
-            raise
-        except GarminConnectTooManyRequestsError:
-            wait_time = (attempt + 1) * self.RETRY_DELAY
-            logger.error(f"Too many requests to Garmin, retrying in {wait_time} seconds")
-            await asyncio.sleep(wait_time)
-            raise
-        except GarminConnectionError as e:
-            if attempt == self.MAX_RETRIES - 1:
-                logger.error("Max retries reached, failed to connect to Garmin")
+        retry_delay = self.INITIAL_RETRY_DELAY
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                if not self.client:
+                    self.client = Garmin(self.email, self.password)
+                
+                self.client.login()
+                logger.info("Connected to Garmin")
+                return
+                
+            except GarminConnectTooManyRequestsError:
+                logger.warning(f"Too many requests to Garmin, waiting {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  
+                if attempt == self.MAX_RETRIES - 1:
+                    raise
+                continue
+                
+            except GarminConnectAuthenticationError as e:
+                logger.error(f"Authentication error with Garmin: {str(e)}")
                 raise
-            wait_time = (attempt + 1) * self.RETRY_DELAY
-            logger.warning(f"Connection error to Garmin, retrying in {wait_time} seconds")
-            await asyncio.sleep(wait_time)
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error connecting to Garmin: {str(e)}")
-            raise
+                
+            except GarminConnectConnectionError as e:
+                logger.warning(f"Connection error to Garmin, retrying in {retry_delay} seconds")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  
+                if attempt == self.MAX_RETRIES - 1:
+                    raise
+                continue
+                
+            except Exception as e:
+                logger.error(f"Unexpected error connecting to Garmin: {str(e)}")
+                raise
 
     async def get_session_status(self) -> dict[str, any]:
         """Get the session status"""
@@ -74,3 +85,52 @@ class GarminConnector:
     async def get_activity_details(self, activity_id: str):
         await self.connect()
         return  self.client.get_activity_details(activity_id)
+
+    async def get_activities(self, limit: int = 20) -> list[Activity]:
+        """Get activities with specified limit"""
+        await self.connect()
+        
+        try:
+            raw_activities = self.client.get_activities(0, limit)
+            
+            activities = []
+            for raw in raw_activities:
+                activity = Activity(
+                    id=raw.get('activityId'),
+                    start_time=datetime.fromisoformat(raw.get('startTimeLocal').replace('Z', '+00:00')),
+                    duration=raw.get('duration', 0),  
+                    distance=raw.get('distance', 0), 
+                    heart_rate_avg=raw.get('averageHR'),  
+                    heart_rate_max=raw.get('maxHR'),
+                    heart_rate_zone=None,  
+                    pace=raw.get('averageSpeed'),
+                    calories=raw.get('calories'),
+                    elevation_gain=raw.get('elevationGain'),
+                    activity_type=raw.get('activityType', {}).get('typeKey', 'unknown')
+                )
+                activities.append(activity)
+            
+            return activities
+        except Exception as e:
+            logger.error(f"Error getting activities: {str(e)}")
+            raise
+
+    async def get_weekly_activities(self) -> list[Activity]:
+        """Get activities from the last 7 days"""
+        await self.connect()
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+        
+        try:
+            activities = await self.get_activities(limit=20)
+            
+            weekly_activities = [
+                activity for activity in activities
+                if start_date <= activity.start_time <= end_date
+            ]
+            
+            return weekly_activities
+        except Exception as e:
+            logger.error(f"Error getting weekly activities: {str(e)}")
+            raise
