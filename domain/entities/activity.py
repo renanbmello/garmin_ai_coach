@@ -14,3 +14,4 @@ class Activity:
     pace: Optional[float]
     calories: Optional[float]
     elevation_gain: Optional[float]
+    activity_type: str
