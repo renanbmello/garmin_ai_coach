@@ -1,6 +1,13 @@
 import uvicorn
-from dotenv import load_dotenv
+from infrastructure.database_init import init_database
+from infrastructure.logging_config import setup_logging
 
 if __name__ == "__main__":
-    load_dotenv()
-    uvicorn.run("interfaces.api.main:app", host="0.0.0.0", port=8000, reload=True)
+    setup_logging()
+    
+    uvicorn.run(
+        "interfaces.api.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )
