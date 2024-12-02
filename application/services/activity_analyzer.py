@@ -16,7 +16,7 @@ class ActivityAnalyzer:
             'weekly_distance': None
         }
 
-    def add_historical_data(self, activities: List[Activity]):
+    def add_historical_data(self, activities: list[Activity]):
         """Add historical data to the analyzer"""
         data = [self._activity_to_dict(activity) for activity in activities]
         self.historical_data = pd.DataFrame(data)
