@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Any
 import openai
 import os
 from domain.entities.activity import Activity
@@ -14,6 +14,47 @@ class LLMAnalyzer:
 
         context = self._prepare_activity_context(running_activities)
         
+        print("\n=== PROMPT PARA O GPT-4 ===\n")
+        print("System message:")
+        print("""You are an experienced running coach specializing in training data analysis and periodization. 
+        Focus on practical insights and detailed analysis of running metrics including pace, heart rate, cadence, 
+        and training effect. Consider the relationship between these metrics and their impact on performance and recovery. This data is from Garmin device.""")
+        
+        print("\nUser message:")
+        print(f"""
+        Analyze the last {len(running_activities)} running activities and provide:
+        
+        1. Progress:
+           - Pace evolution and consistency
+           - Distance progression
+           - Heart rate trends and zones
+           - Cadence analysis
+        
+        2. Training Load:
+           - Weekly volume and intensity
+           - Training effect and recovery needs
+           - VO2 Max trends
+           - Signs of fatigue or overload
+        
+        3. Technical Analysis:
+           - Pace distribution within runs
+           - Cadence optimization
+           - Heart rate response to pace changes
+           - Impact of environmental factors
+        
+        4. Recommendations:
+           - Volume/intensity adjustments
+           - Recovery strategies
+           - Technical improvements
+           - Suggested next goals
+        
+        Data from running activities:
+        {context}
+        
+        Please provide a detailed but practical analysis focusing on actionable insights.
+        """)
+        print("\n=== FIM DO PROMPT ===\n")
+        
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4",
@@ -22,7 +63,7 @@ class LLMAnalyzer:
                         "role": "system", 
                         "content": """You are an experienced running coach specializing in training data analysis and periodization. 
                         Focus on practical insights and detailed analysis of running metrics including pace, heart rate, cadence, 
-                        and training effect. Consider the relationship between these metrics and their impact on performance and recovery."""
+                        and training effect. Consider the relationship between these metrics and their impact on performance and recovery. This data is from Garmin device."""
                     },
                     {
                         "role": "user", 
@@ -98,26 +139,129 @@ class LLMAnalyzer:
         if not activities:
             return "No activities found"
         
-        return "\n".join([
-            f"Running {idx+1} ({activity.start_time.strftime('%Y-%m-%d %H:%M')}):\n"
-            f"- Duration: {activity.duration:.0f} minutes\n"
-            f"- Distance: {(activity.distance / 1000):.2f} km\n"
-            f"- Average Pace: {self._calculate_pace(activity.duration, activity.distance)}\n"
-            f"- Average Heart Rate: {activity.heart_rate_avg:.0f} bpm\n"
-            f"- Maximum Heart Rate: {activity.heart_rate_max:.0f} bpm\n"
-            f"- Elevation Gain: {activity.elevation_gain:.0f}m\n"
-            + (f"- Average Cadence: {activity.cadence_avg:.0f} spm\n" if activity.cadence_avg else "")
-            + (f"- Maximum Cadence: {activity.cadence_max:.0f} spm\n" if activity.cadence_max else "")
-            + (f"- Training Effect: {activity.training_effect:.1f}\n" if activity.training_effect else "")
-            + (f"- VO2 Max: {activity.vo2_max:.1f}\n" if activity.vo2_max else "")
-            + (f"- Suggested Recovery Time: {activity.recovery_time} hours\n" if activity.recovery_time else "")
-            + (f"- Temperature: {activity.temperature:.1f}°C\n" if activity.temperature else "")
-            + "\nKilometer Splits:\n"
-            + "\n".join([
-                f"  Km {i+1}: {self._calculate_pace(split['duration'], split['distance'])} "
-                f"| HR: {split['heart_rate']:.0f} bpm "
-                f"| Cadence: {split['cadence']:.0f} spm"
-                for i, split in enumerate(activity.splits)
-            ]) if activity.splits else ""
-            for idx, activity in enumerate(reversed(activities))
-        ])
+        def format_pace(speed_ms: float) -> str:
+            """Converte velocidade em m/s para pace em min/km"""
+            if not speed_ms or speed_ms <= 0:
+                return "N/A"
+            try:
+                minutes_per_km = (1000 / speed_ms) / 60
+                minutes = int(minutes_per_km)
+                seconds = int((minutes_per_km - minutes) * 60)
+                return f"{minutes}:{seconds:02d}/km"
+            except:
+                return "N/A"
+
+        def format_duration(seconds: float) -> str:
+            """convert duration in seconds to HH:MM:SS format"""
+            if not seconds:
+                return "N/A"
+            
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            secs = int(seconds % 60)
+            
+            if hours > 0:
+                return f"{hours}:{minutes:02d}:{secs:02d}"
+            return f"{minutes:02d}:{secs:02d}"
+
+        def safe_format(value: Any, format_str: str = '{}') -> str:
+            """Format value with None handling"""
+            if value is None or (isinstance(value, (int, float)) and value <= 0):
+                return "N/A"
+            try:
+                return format_str.format(value)
+            except:
+                return "N/A"
+
+        activities_text = []
+        for idx, activity in enumerate(reversed(activities)):
+            activity_lines = [
+                f"Running {idx+1} ({activity.start_time.strftime('%Y-%m-%d %H:%M')}):"
+            ]
+            
+            if getattr(activity, 'activity_name', None):
+                activity_lines.append(f"- Activity Name: {activity.activity_name}")
+                
+            activity_lines.extend([
+                f"- Duration: {format_duration(activity.duration)} (Moving: {format_duration(getattr(activity, 'moving_duration', None))})",
+                f"- Distance: {(activity.distance / 1000):.2f} km",
+                f"- Average Pace: {format_pace(getattr(activity, 'average_speed', None))}",
+                f"- Best Pace: {format_pace(getattr(activity, 'max_speed', None))}",
+                f"- Heart Rate: {safe_format(activity.heart_rate_avg, '{:.0f}')} bpm (max: {safe_format(activity.heart_rate_max, '{:.0f}')} bpm)",
+                f"- Cadence: {safe_format(getattr(activity, 'cadence_avg', None), '{:.0f}')} spm (max: {safe_format(getattr(activity, 'cadence_max', None), '{:.0f}')} spm)",
+                f"- Elevation: gain {safe_format(activity.elevation_gain, '{:.0f}')}m, loss {safe_format(getattr(activity, 'elevation_loss', None), '{:.0f}')}m (min: {safe_format(getattr(activity, 'min_elevation', None), '{:.0f}')}m, max: {safe_format(getattr(activity, 'max_elevation', None), '{:.0f}')}m)"
+            ])
+
+            if getattr(activity, 'training_effect', None) is not None:
+                activity_lines.append(
+                    f"- Training Effect: {safe_format(getattr(activity, 'training_effect', None))} "
+                    f"({getattr(activity, 'training_effect_label', 'N/A')}) - "
+                    f"{getattr(activity, 'training_effect_message', 'N/A')}"
+                )
+
+            if getattr(activity, 'anaerobic_effect', None) is not None:
+                activity_lines.append(f"- Anaerobic Effect: {safe_format(getattr(activity, 'anaerobic_effect', None))}")
+
+            if getattr(activity, 'vo2_max', None) is not None:
+                activity_lines.append(f"- VO2 Max: {safe_format(getattr(activity, 'vo2_max', None))}")
+
+            if getattr(activity, 'power_avg', None) is not None:
+                activity_lines.append(
+                    f"- Power: {safe_format(getattr(activity, 'power_avg', None), '{:.0f}')}W "
+                    f"(max: {safe_format(getattr(activity, 'power_max', None), '{:.0f}')}W)"
+                )
+
+            if any(getattr(activity, attr, None) is not None 
+                  for attr in ['stride_length', 'ground_contact_time', 'vertical_oscillation', 'vertical_ratio']):
+                activity_lines.extend([
+                    "- Running Dynamics:",
+                    f"  * Stride Length: {safe_format(getattr(activity, 'stride_length', None), '{:.1f}')}cm",
+                    f"  * Ground Contact Time: {safe_format(getattr(activity, 'ground_contact_time', None), '{:.0f}')}ms",
+                    f"  * Vertical Oscillation: {safe_format(getattr(activity, 'vertical_oscillation', None), '{:.1f}')}cm",
+                    f"  * Vertical Ratio: {safe_format(getattr(activity, 'vertical_ratio', None), '{:.1f}')}%"
+                ])
+
+            if getattr(activity, 'intensity_minutes', None):
+                activity_lines.append(
+                    f"- Intensity Minutes: {getattr(activity, 'intensity_minutes', {}).get('moderate', 0)} moderate, "
+                    f"{getattr(activity, 'intensity_minutes', {}).get('vigorous', 0)} vigorous"
+                )
+
+            if getattr(activity, 'steps', None):
+                activity_lines.append(f"- Steps: {activity.steps}")
+
+            if getattr(activity, 'temperature', None) is not None:
+                activity_lines.append(
+                    f"- Weather: {safe_format(activity.temperature, '{:.1f}')}°C "
+                    f"(Feels like: {safe_format(activity.feels_like, '{:.1f}')}°C, "
+                    f"Humidity: {safe_format(activity.humidity, '{:.0f')}%)"
+                )
+
+            if getattr(activity, 'avg_stress', None) is not None:
+                activity_lines.append(
+                    f"- Stress Level: {activity.avg_stress} avg "
+                    f"(max: {activity.max_stress})"
+                )
+
+            if getattr(activity, 'training_load', None) is not None:
+                activity_lines.append(f"- Training Load: {activity.training_load}")
+
+            if getattr(activity, 'training_status', None):
+                activity_lines.append(f"- Training Status: {activity.training_status}")
+
+            if getattr(activity, 'performance_condition', None) is not None:
+                activity_lines.append(f"- Performance Condition: {activity.performance_condition}")
+
+            # Splits
+            if getattr(activity, 'splits', None):
+                activity_lines.append("\nKilometer Splits:")
+                for i, split in enumerate(activity.splits):
+                    activity_lines.append(
+                        f"  Km {i+1}: {format_pace(split.get('pace'))} "
+                        f"| Elevation: +{safe_format(split.get('elevation_gain'), '{:.0f}')}m"
+                    )
+
+            activities_text.append("\n".join(activity_lines))
+            print(activity_lines)
+
+        return "\n\n".join(activities_text)

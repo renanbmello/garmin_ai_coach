@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from infrastructure.garmin.garmin_connector import GarminConnector
+from infrastructure.garmin.garmin_connector import get_garmin_connector, GarminConnector
 from .middleware import GarminSessionMiddleware
 from application.services.auth_service import AuthenticationService
 from application.services.trend_analyzer import TrendAnalyzer
@@ -27,7 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-garmin_connector = GarminConnector()
+garmin_connector = get_garmin_connector()
 
 app.add_middleware(GarminSessionMiddleware)
 
@@ -35,7 +35,6 @@ auth_service = AuthenticationService()
 
 trend_analyzer = TrendAnalyzer()
 
-# Configuração do logger
 logger = logging.getLogger(__name__)
 
 def get_db():
@@ -74,12 +73,21 @@ async def refresh_auth():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/activities")
-async def get_activities():
+async def get_activities(
+    limit: int = 10,
+    garmin_connector: GarminConnector = Depends(get_garmin_connector)
+):
     """Get activities"""
     try:
-        activities = await garmin_connector.get_activities()
+        activities = await garmin_connector.get_activities(limit=limit)
         return activities
     except Exception as e:
+        logger.error(f"Error getting activities: {str(e)}")
+        if "Too Many Requests" in str(e):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests to Garmin. Please try again in a few minutes."
+            )
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/latest-activity")
@@ -91,13 +99,23 @@ async def get_latest_activity():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@app.get("/activity-details")
-async def get_activity_details(activity_id: str):
-    """Get activity details"""
-    try:    
-        activity = await garmin_connector.get_activity_details(activity_id)
-        return activity
+@app.get("/activity-details/{activity_id}")
+async def get_activity_details(
+    activity_id: int,
+    garmin_connector: GarminConnector = Depends(get_garmin_connector)
+):
+    try:
+        details = await garmin_connector.get_activity_details(activity_id)
+        if not details:
+            raise HTTPException(status_code=404, detail="Activity not found")
+        return details
     except Exception as e:
+        logger.error(f"Error getting activity details: {str(e)}")
+        if "Too Many Requests" in str(e):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests to Garmin. Please try again in a few minutes."
+            )
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/analysis/weekly-summary")
@@ -123,7 +141,7 @@ async def initialize_data(
     repository: ActivityRepository = Depends(get_activity_repository)
 ):
     """Initialize database with Garmin data"""
-    garmin_connector = GarminConnector()
+    garmin_connector = get_garmin_connector()
     service = DataInitializationService(db, repository, garmin_connector)
     
     try:
@@ -182,4 +200,68 @@ async def get_hybrid_analysis(
     hybrid_analyzer = HybridAnalyzer(ml_analyzer, llm_analyzer)
     analysis = await hybrid_analyzer.analyze_activities(activities)
     return analysis
+
+@app.get("/analysis/preview")
+async def preview_analysis(
+    db: Session = Depends(get_db),
+    garmin_connector: GarminConnector = Depends(get_garmin_connector)
+):
+    """Preview the analysis prompt without sending to GPT-4"""
+    try:
+        # Busca atividades
+        activities = await garmin_connector.get_activities(limit=10)
+        
+        # Prepara o contexto
+        llm_analyzer = LLMAnalyzer()
+        running_activities = [a for a in activities if a.activity_type.lower() == "running"]
+        running_activities = running_activities[:10]
+        context = llm_analyzer._prepare_activity_context(running_activities)
+        
+        # Retorna o prompt que seria enviado
+        return {
+            "system_message": """You are an experienced running coach specializing in training data analysis and periodization. 
+            Focus on practical insights and detailed analysis of running metrics including pace, heart rate, cadence, 
+            and training effect. Consider the relationship between these metrics and their impact on performance and recovery. This data is from Garmin device.""",
+            "user_message": f"""
+            Analyze the last {len(running_activities)} running activities and provide:
+            
+            1. Progress:
+               - Pace evolution and consistency
+               - Distance progression
+               - Heart rate trends and zones
+               - Cadence analysis
+            
+            2. Training Load:
+               - Weekly volume and intensity
+               - Training effect and recovery needs
+               - VO2 Max trends
+               - Signs of fatigue or overload
+            
+            3. Technical Analysis:
+               - Pace distribution within runs
+               - Cadence optimization
+               - Heart rate response to pace changes
+               - Impact of environmental factors
+            
+            4. Recommendations:
+               - Volume/intensity adjustments
+               - Recovery strategies
+               - Technical improvements
+               - Suggested next goals
+            
+            Data from running activities:
+            {context}
+            
+            Please provide a detailed but practical analysis focusing on actionable insights.
+            """,
+            "metadata": {
+                "activities_analyzed": len(running_activities),
+                "date_range": {
+                    "start": running_activities[-1].start_time.isoformat() if running_activities else None,
+                    "end": running_activities[0].start_time.isoformat() if running_activities else None
+                }
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
