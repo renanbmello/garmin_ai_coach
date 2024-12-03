@@ -5,11 +5,14 @@ from .middleware import GarminSessionMiddleware
 from application.services.auth_service import AuthenticationService
 from application.services.trend_analyzer import TrendAnalyzer
 from application.services.ml_analyzer import MLAnalyzer
+from application.services.llm_analyzer import LLMAnalyzer
+from application.services.hybrid_analyzer import HybridAnalyzer
 from sqlalchemy.orm import Session
 from infrastructure.database import SessionLocal
 from infrastructure.repositories.activity_repository import ActivityRepository
 from application.services.data_initialization_service import DataInitializationService
 from infrastructure.database_init import init_database
+import logging
 
 # Inicializa o banco de dados na inicialização da aplicação
 init_database()
@@ -32,6 +35,9 @@ auth_service = AuthenticationService()
 
 trend_analyzer = TrendAnalyzer()
 
+# Configuração do logger
+logger = logging.getLogger(__name__)
+
 def get_db():
     db = SessionLocal()
     try:
@@ -44,6 +50,9 @@ def get_activity_repository(db: Session = Depends(get_db)):
 
 def get_ml_analyzer(repository: ActivityRepository = Depends(get_activity_repository)):
     return MLAnalyzer(repository)
+
+def get_llm_analyzer(repository: ActivityRepository = Depends(get_activity_repository)):
+    return LLMAnalyzer(repository)
 
 @app.get("/auth/status")
 async def get_auth_status():
@@ -64,18 +73,29 @@ async def refresh_auth():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/")
-async def get_latest_activity():
+@app.get("/activities")
+async def get_activities():
+    """Get activities"""
     try:
-        activity = await garmin_connector.get_latest_activity()
-        return activity
+        activities = await garmin_connector.get_activities()
+        return activities
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/latest-activity")
 async def get_latest_activity():
+    """Get latest activity"""
     try:
         activity = await garmin_connector.get_latest_activity()
+        return activity
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/activity-details")
+async def get_activity_details(activity_id: str):
+    """Get activity details"""
+    try:    
+        activity = await garmin_connector.get_activity_details(activity_id)
         return activity
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -127,4 +147,39 @@ async def get_initial_analysis(
         return analysis
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/analysis/smart")
+async def get_smart_analysis(
+    llm_analyzer: LLMAnalyzer = Depends(get_llm_analyzer),
+    repository: ActivityRepository = Depends(get_activity_repository)
+):
+    """Get AI-powered analysis of activities"""
+    try:
+        activities = repository.get_all()
+        if not activities:
+            raise HTTPException(status_code=404, detail="No activities found")
+        
+        analysis = await llm_analyzer.analyze_activities(activities)
+        return {"status": "success", "data": analysis}  # Garante retorno JSON válido
+    except Exception as e:
+        logger.error(f"Error in smart analysis: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail={"status": "error", "message": str(e)}
+        )
+
+@app.get("/analysis/hybrid")
+async def get_hybrid_analysis(
+    ml_analyzer: MLAnalyzer = Depends(get_ml_analyzer),
+    llm_analyzer: LLMAnalyzer = Depends(get_llm_analyzer),
+    repository: ActivityRepository = Depends(get_activity_repository)
+):
+    """Get combined ML and LLM analysis"""
+    activities = repository.get_all()
+    if not activities:
+        raise HTTPException(status_code=404, detail="No activities found")
+    
+    hybrid_analyzer = HybridAnalyzer(ml_analyzer, llm_analyzer)
+    analysis = await hybrid_analyzer.analyze_activities(activities)
+    return analysis
 

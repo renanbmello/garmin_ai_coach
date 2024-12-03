@@ -1,3 +1,4 @@
+import json
 import os
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -83,8 +84,48 @@ class GarminConnector:
         return activities[0] if activities else None 
 
     async def get_activity_details(self, activity_id: str):
-        await self.connect()
-        return  self.client.get_activity_details(activity_id)
+        """Get activity details"""
+        try:    
+            activity = await self.get_activity_details(activity_id)
+
+            print("Available activity details: ", json.dumps(activity, indent=2))
+
+            splits = []
+            if 'splitSummaries' in activity:
+                for split in activity['splitSummaries']:
+                    if split['splitType'] == 'RWD_RUN':  # Pegando apenas os splits de corrida
+                        splits.append({
+                            'distance': split.get('distance', 0),
+                            'duration': split.get('duration', 0),
+                            'pace': split.get('averageSpeed', 0),
+                            'elevation_gain': split.get('totalAscent', 0),
+                            'max_speed': split.get('maxSpeed', 0)
+                    })
+            return {
+            'splits': splits,
+            'cadence_avg': activity.get('averageRunningCadenceInStepsPerMinute'),
+            'cadence_max': activity.get('maxRunningCadenceInStepsPerMinute'),
+            'training_effect': activity.get('aerobicTrainingEffect'),
+            'anaerobic_effect': activity.get('anaerobicTrainingEffect'),
+            'vo2_max': activity.get('vO2MaxValue'),
+            'training_effect_label': activity.get('trainingEffectLabel'),
+            'training_effect_message': activity.get('aerobicTrainingEffectMessage'),
+            'stride_length': activity.get('avgStrideLength'),
+            'vertical_oscillation': activity.get('avgVerticalOscillation'),
+            'ground_contact_time': activity.get('avgGroundContactTime'),
+            'vertical_ratio': activity.get('avgVerticalRatio'),
+            'power_avg': activity.get('avgPower'),
+            'power_max': activity.get('maxPower'),
+            'elevation_min': activity.get('minElevation'),
+            'elevation_max': activity.get('maxElevation'),
+            'intensity_minutes': {
+                'moderate': activity.get('moderateIntensityMinutes', 0),
+                'vigorous': activity.get('vigorousIntensityMinutes', 0)
+            }
+        }
+        except Exception as e:
+            logger.error(f"Error getting activity details: {str(e)}")
+            return {}
 
     async def get_activities(self, limit: int = 20) -> list[Activity]:
         """Get activities with specified limit"""
@@ -92,21 +133,40 @@ class GarminConnector:
         
         try:
             raw_activities = self.client.get_activities(0, limit)
+            # print("Raw activities: ", json.dumps(raw_activities, indent=2))
             
             activities = []
-            for raw in raw_activities:
-                activity = Activity(
-                    id=raw.get('activityId'),
-                    start_time=datetime.fromisoformat(raw.get('startTimeLocal').replace('Z', '+00:00')),
-                    duration=raw.get('duration', 0),  
-                    distance=raw.get('distance', 0), 
-                    heart_rate_avg=raw.get('averageHR'),  
-                    heart_rate_max=raw.get('maxHR'),
-                    heart_rate_zone=None,  
-                    pace=raw.get('averageSpeed'),
-                    calories=raw.get('calories'),
-                    elevation_gain=raw.get('elevationGain'),
-                    activity_type=raw.get('activityType', {}).get('typeKey', 'unknown')
+            for activity_data in raw_activities:
+                if activity_data.get('activityType', {}).get('typeKey', '').lower() == "running":
+                    details = await self.get_activity_details(activity_data['activityId'])
+                    
+                    activity = Activity(
+                    id=activity_data['activityId'],
+                    start_time=datetime.fromisoformat(activity_data['startTimeLocal'].replace('Z', '+00:00')),
+                    duration=activity_data.get('duration', 0),
+                    distance=activity_data.get('distance', 0),
+                    heart_rate_avg=activity_data.get('averageHR'),
+                    heart_rate_max=activity_data.get('maxHR'),
+                    heart_rate_zone=None,
+                    pace=activity_data.get('averageSpeed', 0),
+                    calories=activity_data.get('calories', 0),
+                    elevation_gain=activity_data.get('elevationGain'),
+                    activity_type=activity_data.get('activityType', {}).get('typeKey', '').lower(),
+                    cadence_avg=details.get('cadence_avg'),
+                    cadence_max=details.get('cadence_max'),
+                    splits=details.get('splits', []),
+                    training_effect=details.get('training_effect'),
+                    vo2_max=details.get('vo2_max'),
+                    stride_length=details.get('stride_length'),
+                    vertical_oscillation=details.get('vertical_oscillation'),
+                    ground_contact_time=details.get('ground_contact_time'),
+                    vertical_ratio=details.get('vertical_ratio'),
+                    power_avg=details.get('power_avg'),
+                    power_max=details.get('power_max'),
+                    training_effect_label=details.get('training_effect_label'),
+                    training_effect_message=details.get('training_effect_message'),
+                    anaerobic_effect=details.get('anaerobic_effect'),
+                    intensity_minutes=details.get('intensity_minutes')
                 )
                 activities.append(activity)
             
