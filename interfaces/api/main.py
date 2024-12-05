@@ -13,6 +13,7 @@ from infrastructure.repositories.activity_repository import ActivityRepository
 from application.services.data_initialization_service import DataInitializationService
 from infrastructure.database_init import init_database
 import logging
+from datetime import datetime
 
 # Inicializa o banco de dados na inicialização da aplicação
 init_database()
@@ -74,7 +75,7 @@ async def refresh_auth():
 
 @app.get("/activities")
 async def get_activities(
-    limit: int = 10,
+    limit: int = 50,
     garmin_connector: GarminConnector = Depends(get_garmin_connector)
 ):
     """Get activities"""
@@ -167,18 +168,19 @@ async def get_initial_analysis(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/analysis/smart")
-async def get_smart_analysis(
-    llm_analyzer: LLMAnalyzer = Depends(get_llm_analyzer),
-    repository: ActivityRepository = Depends(get_activity_repository)
+async def smart_analysis(
+    db: Session = Depends(get_db),
+    garmin_connector: GarminConnector = Depends(get_garmin_connector)
 ):
-    """Get AI-powered analysis of activities"""
+    """Get smart analysis from GPT-4"""
     try:
-        activities = repository.get_all()
-        if not activities:
-            raise HTTPException(status_code=404, detail="No activities found")
-        
+        activities = await garmin_connector.get_activities(limit=10)
+        llm_analyzer = LLMAnalyzer()
         analysis = await llm_analyzer.analyze_activities(activities)
-        return {"status": "success", "data": analysis}  # Garante retorno JSON válido
+        
+        print("Smart Analysis Response:", analysis)  # Para debug
+        return analysis
+        
     except Exception as e:
         logger.error(f"Error in smart analysis: {str(e)}")
         raise HTTPException(
@@ -208,52 +210,53 @@ async def preview_analysis(
 ):
     """Preview the analysis prompt without sending to GPT-4"""
     try:
-        # Busca atividades
         activities = await garmin_connector.get_activities(limit=10)
-        
-        # Prepara o contexto
-        llm_analyzer = LLMAnalyzer()
         running_activities = [a for a in activities if a.activity_type.lower() == "running"]
         running_activities = running_activities[:10]
+        
+        llm_analyzer = LLMAnalyzer()
         context = llm_analyzer._prepare_activity_context(running_activities)
         
-        # Retorna o prompt que seria enviado
-        return {
-            "system_message": """You are an experienced running coach specializing in training data analysis and periodization. 
-            Focus on practical insights and detailed analysis of running metrics including pace, heart rate, cadence, 
-            and training effect. Consider the relationship between these metrics and their impact on performance and recovery. This data is from Garmin device.""",
-            "user_message": f"""
-            Analyze the last {len(running_activities)} running activities and provide:
-            
-            1. Progress:
-               - Pace evolution and consistency
-               - Distance progression
-               - Heart rate trends and zones
-               - Cadence analysis
-            
-            2. Training Load:
-               - Weekly volume and intensity
-               - Training effect and recovery needs
-               - VO2 Max trends
-               - Signs of fatigue or overload
-            
-            3. Technical Analysis:
-               - Pace distribution within runs
-               - Cadence optimization
-               - Heart rate response to pace changes
-               - Impact of environmental factors
-            
-            4. Recommendations:
-               - Volume/intensity adjustments
-               - Recovery strategies
-               - Technical improvements
-               - Suggested next goals
-            
-            Data from running activities:
-            {context}
-            
-            Please provide a detailed but practical analysis focusing on actionable insights.
-            """,
+        system_message = """You are an experienced running coach specializing in training data analysis and periodization. 
+        Focus on practical insights and detailed analysis of running metrics including pace, heart rate, cadence, 
+        and training effect. Consider the relationship between these metrics and their impact on performance and recovery. This data is from Garmin device."""
+        
+        user_message = f"""
+        Analyze the last {len(running_activities)} running activities and provide:
+        
+        1. Progress:
+           - Pace evolution and consistency
+           - Distance progression
+           - Heart rate trends and zones
+           - Cadence analysis
+        
+        2. Training Load:
+           - Weekly volume and intensity
+           - Training effect and recovery needs
+           - VO2 Max trends
+           - Signs of fatigue or overload
+        
+        3. Technical Analysis:
+           - Pace distribution within runs
+           - Cadence optimization
+           - Heart rate response to pace changes
+           - Impact of environmental factors
+        
+        4. Recommendations:
+           - Volume/intensity adjustments
+           - Recovery strategies
+           - Technical improvements
+           - Suggested next goals
+        
+        Data from running activities:
+        {context}
+        
+        Please provide a detailed but practical analysis focusing on actionable insights.
+        """
+        analysis_send = {
+            "system_message": system_message,
+            "user_message": user_message,
+            "context": context,  
             "metadata": {
                 "activities_analyzed": len(running_activities),
                 "date_range": {
@@ -262,6 +265,9 @@ async def preview_analysis(
                 }
             }
         }
+        print("analysis_send")
+        print(analysis_send)
+        return analysis_send
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

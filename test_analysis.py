@@ -9,18 +9,15 @@ logger = logging.getLogger(__name__)
 async def test_smart_analysis():
     async with aiohttp.ClientSession() as session:
         try:
-            # Verifica autenticação
             async with session.get("http://localhost:8000/auth/status") as response:
                 status = await response.json()
                 logger.info(f"Auth Status: {status}")
 
                 if status.get('status') == 'disconnected':
-                    # Tenta autenticar
                     async with session.post("http://localhost:8000/auth/refresh") as auth_response:
                         auth_result = await auth_response.json()
                         logger.info(f"Auth refresh result: {auth_result}")
 
-            # Faz a análise smart
             async with session.get("http://localhost:8000/analysis/smart") as response:
                 if response.status == 200:
                     analysis = await response.json()
