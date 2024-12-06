@@ -81,7 +81,12 @@ async def get_activities(
     """Get activities"""
     try:
         activities = await garmin_connector.get_activities(limit=limit)
-        return activities
+        running_activities = [
+            activity.dict()
+            for activity in activities
+            if activity.activity_type.lower() == "running"
+        ]
+        return running_activities
     except Exception as e:
         logger.error(f"Error getting activities: {str(e)}")
         if "Too Many Requests" in str(e):
@@ -211,6 +216,8 @@ async def preview_analysis(
     """Preview the analysis prompt without sending to GPT-4"""
     try:
         activities = await garmin_connector.get_activities(limit=10)
+        print("activities")
+        print(activities[0].dict())
         running_activities = [a for a in activities if a.activity_type.lower() == "running"]
         running_activities = running_activities[:10]
         

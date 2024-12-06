@@ -1,5 +1,8 @@
 from datetime import datetime
 from typing import Optional, List
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Activity:
     def __init__(
@@ -107,8 +110,11 @@ class Activity:
             
         distance_km = self.distance / 1000
         duration_minutes = self.duration / 60
+        pace = duration_minutes / distance_km
         
-        return duration_minutes / distance_km
+        logger.debug(f"Pace calculation - Distance (km): {distance_km}, Duration (min): {duration_minutes}, Pace: {pace}")
+        
+        return pace
     
     @property
     def pace_formatted(self) -> str:
