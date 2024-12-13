@@ -80,6 +80,20 @@ class GarminConnector:
                     logger.error(f"Error connecting to Garmin: {str(e)}")
                     raise
 
+    async def login(self, email: str, password: str) -> None:
+        """Login to Garmin"""
+        async with self._auth_lock:
+            self.email = email
+            self.password = password
+            self.client = Garmin(self.email, self.password)
+            self.client.login()
+            self._last_login = datetime.now()
+            self._details_cache.clear()
+            self._activities_cache.clear()
+            logger.info("Connected to Garmin")
+
+            await self.connect()
+
     def _convert_to_activity(self, activity_data: dict) -> Activity:
         """Convert Garmin activity data to Activity object"""
         try:
