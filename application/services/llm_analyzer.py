@@ -1,4 +1,5 @@
 import logging
+import requests
 from typing import List, Any
 import openai
 import os
@@ -10,6 +11,8 @@ class LLMAnalyzer:
     def __init__(self, repository=None):
         self.repository = repository
         self.client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.xai_api_url = "https://api.x.ai/v1/chat/completions"
+        self.xai_api_key = os.getenv("X_API_KEY")
 
     async def analyze_activities(self, activities: List[Activity]) -> dict:
         """Analyze activities using LLM"""
@@ -56,6 +59,29 @@ class LLMAnalyzer:
             Please provide a detailed but practical analysis focusing on actionable insights.
             """
 
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.xai_api_key}"
+            }
+            payload = {
+                "messages": [
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_message}
+                ],
+                "model": "grok-beta",
+                "stream": False,
+                "temperature": 0
+            }
+
+            xAIResponse = requests.post(
+                self.xai_api_url,
+                headers=headers,
+                json=payload
+            )
+
+            xAIResponse.raise_for_status()
+            analysisXAI = xAIResponse.json()
+
             # Chamada para o GPT-4
             response = self.client.chat.completions.create(
                 model="gpt-4",
@@ -68,7 +94,8 @@ class LLMAnalyzer:
             analysis_result = response.choices[0].message.content
 
             return {
-                "analysis": analysis_result
+                "analysis": analysis_result,
+                "analysisXAI": analysisXAI
             }
             
         except Exception as e:
@@ -170,7 +197,7 @@ class LLMAnalyzer:
             if any(getattr(activity, attr, None) is not None for attr in running_dynamics_attrs):
                 activity_lines.extend([
                     "- Running Dynamics:",
-                    f"  * Stride Length: {safe_format(activity.stride_length, '{:.1f}')}cm",
+                    f"  *  Length: {safe_format(activity.stride_length, '{:.1f}')}cm",
                     f"  * Ground Contact Time: {safe_format(activity.ground_contact_time, '{:.0f}')}ms",
                     f"  * Vertical Oscillation: {safe_format(activity.vertical_oscillation, '{:.1f}')}cm",
                     f"  * Vertical Ratio: {safe_format(activity.vertical_ratio, '{:.1f}')}%"
