@@ -101,6 +101,8 @@ async def get_latest_activity():
     """Get latest activity"""
     try:
         activity = await garmin_connector.get_latest_activity()
+        if activity is None:
+            raise HTTPException(status_code=404, detail="No activity found")
         return activity
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -161,11 +161,20 @@ class GarminConnector:
 
     async def get_latest_activity(self) -> Activity:
         """Get latest activity"""
-        await self.connect()
-        activities = self.client.get_activities(0, 1)
-        if activities:
-            return self._convert_to_activity(activities[0])
-        return None
+        try:
+            await self.connect()
+            activities = self.client.get_activities(0, 10)
+            if not activities:
+                return None
+            
+            for activity in activities:
+                converted_activity = self._convert_to_activity(activity)
+                if converted_activity.activity_type == 'running':
+                    return converted_activity
+            return None
+        except Exception as e:
+            logger.error(f"Error getting latest activity: {str(e)}")
+            return None
 
     async def get_activities(self, limit: int = 10) -> List[Activity]:
         """Get activities and convert them to Activity objects"""
